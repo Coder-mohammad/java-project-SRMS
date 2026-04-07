@@ -82,7 +82,7 @@ public class ViewReportsScreen extends JFrame {
     };
     table = new JTable(model);
     table.setFillsViewportHeight(true);
-    table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+    table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
     loadData();
     panel.add(new JScrollPane(table), BorderLayout.CENTER);
 
@@ -95,12 +95,13 @@ public class ViewReportsScreen extends JFrame {
 
     btnRow.add(actionBtn("Export CSV",         new Color(30,130,60),  e -> exportToCSV()));
     btnRow.add(actionBtn("Print Result Card",  new Color(60,100,200), e -> printResultCard()));
+    btnRow.add(actionBtn("Select All",         new Color(100,100,100), e -> table.selectAll()));
     btnRow.add(actionBtn("Toggle Publish",     new Color(160,100,20), e -> togglePublish()));
     btnRow.add(actionBtn("Back",               new Color(50,100,200), e -> dispose()));
 
     bottomPanel.add(btnRow, BorderLayout.NORTH);
 
-    JLabel footerLabel = new JLabel("Select a row to Print Result Card or Toggle Publish status", SwingConstants.CENTER);
+    JLabel footerLabel = new JLabel("Select row(s) to Print Result Card or Toggle Publish status", SwingConstants.CENTER);
     footerLabel.setFont(new Font("Arial", Font.PLAIN, 11));
     footerLabel.setForeground(ThemeManager.getFg());
     bottomPanel.add(footerLabel, BorderLayout.SOUTH);
@@ -200,27 +201,38 @@ public class ViewReportsScreen extends JFrame {
   // ── Toggle Publish ────────────────────────────────────────────────────────────
 
   private void togglePublish() {
-    int row = table.getSelectedRow();
-    if (row < 0) {
-      JOptionPane.showMessageDialog(this, "Please select a row first.", "Info", JOptionPane.INFORMATION_MESSAGE);
+    int[] rows = table.getSelectedRows();
+    if (rows.length == 0) {
+      JOptionPane.showMessageDialog(this, "Please select one or more rows first.", "Info", JOptionPane.INFORMATION_MESSAGE);
       return;
     }
-    String rollNo  = (String) model.getValueAt(row, 0);
-    String subject = (String) model.getValueAt(row, 4);
-    String current = (String) model.getValueAt(row, 9);
-    int    newVal  = current.equals("Yes") ? 0 : 1;
-    String label   = newVal == 1 ? "Published" : "Unpublished";
 
     try (Connection conn = DatabaseManager.getConnection();
          PreparedStatement ps = conn.prepareStatement(
              "UPDATE marks SET published=? WHERE roll_no=? AND subject_code=?")) {
-      ps.setInt(1, newVal);
-      ps.setString(2, rollNo);
-      ps.setString(3, subject);
-      ps.executeUpdate();
+             
+      int publishCount = 0;
+      int unpublishCount = 0;
+
+      for (int row : rows) {
+        String rollNo  = (String) model.getValueAt(row, 0);
+        String subject = (String) model.getValueAt(row, 4);
+        String current = (String) model.getValueAt(row, 9);
+        int    newVal  = current.equals("Yes") ? 0 : 1;
+        
+        ps.setInt(1, newVal);
+        ps.setString(2, rollNo);
+        ps.setString(3, subject);
+        ps.addBatch();
+        
+        if (newVal == 1) publishCount++;
+        else unpublishCount++;
+      }
+      
+      ps.executeBatch();
       DatabaseManager.logAction("TOGGLE_PUBLISH",
-          rollNo + " / " + subject + " -> " + label);
-      JOptionPane.showMessageDialog(this, "Result marked as: " + label);
+          "Toggled publish for " + rows.length + " records.");
+      JOptionPane.showMessageDialog(this, "Updated " + rows.length + " records (" + publishCount + " published, " + unpublishCount + " unpublished).");
       loadData();
     } catch (Exception ex) {
       JOptionPane.showMessageDialog(this, "Error: " + ex.getMessage(), "DB Error", JOptionPane.ERROR_MESSAGE);
